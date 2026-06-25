@@ -2,8 +2,10 @@ import Geolocation from "@react-native-community/geolocation";
 import React, { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, FlatList, Keyboard, PermissionsAndroid, Platform, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { promptForEnableLocationIfNeeded } from "react-native-android-location-enabler";
+import Config from "react-native-config";
 import MapView, { Marker, Polyline } from "react-native-maps";
-const ORS_API_KEY = "eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6ImUzYzFkNGE5ZjQxMzQxYjdhYTAzMjVkNjlkOTI4ZjcyIiwiaCI6Im11cm11cjY0In0=";
+
+const ORS_API_KEY = Config.ORS_API_KEY
 
 const App = () => {
   const mapRef = useRef(null);
