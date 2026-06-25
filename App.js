@@ -1,6 +1,6 @@
 import Geolocation from "@react-native-community/geolocation";
 import React, { useEffect, useRef, useState } from "react";
-import { FlatList, Image, Keyboard, PermissionsAndroid, Platform, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, FlatList, Keyboard, PermissionsAndroid, Platform, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { promptForEnableLocationIfNeeded } from "react-native-android-location-enabler";
 import MapView, { Marker, Polyline } from "react-native-maps";
 const ORS_API_KEY = "eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6ImUzYzFkNGE5ZjQxMzQxYjdhYTAzMjVkNjlkOTI4ZjcyIiwiaCI6Im11cm11cjY0In0=";
@@ -292,11 +292,7 @@ const App = () => {
         {
           loading &&
           <View style={styles.loader}>
-            <Image
-              style={{ height: 110, width: 110 }}
-              resizeMode="contain"
-              source={require("./src/images/logo.png")}
-            />
+            <ActivityIndicator size={"large"} color={"#ffe100"} />
           </View>
         }
         <View
