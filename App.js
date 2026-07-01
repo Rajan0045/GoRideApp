@@ -5,16 +5,16 @@ import { promptForEnableLocationIfNeeded } from "react-native-android-location-e
 import Config from "react-native-config";
 import MapView, { Marker, Polyline } from "react-native-maps";
 
-const ORS_API_KEY = Config.ORS_API_KEY
+const ORS_API_KEY = Config.ORS_API_KEY;
 
 const App = () => {
   const mapRef = useRef(null);
   const watchId = useRef(null);
   const previousLocation = useRef(null);
   const lastRouteUpdate = useRef(0);
-  const zoomDelta = useRef(0.05);
+  const headingRef = useRef(0);
+  const zoomLevel = useRef(16);
 
-  const [heading, setHeading] = useState(0);
   const [destination, setDestination] = useState(null);
   const [currentLocation, setCurrentLocation] = useState(null);
   const [routeCoordinates, setRouteCoordinates] = useState([]);
@@ -22,48 +22,42 @@ const App = () => {
   const [places, setPlaces] = useState([]);
   const [loading, setLoading] = useState(true);
 
-
-
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setLoading(false);
-    }, 4000);
-
+    const timer = setTimeout(() => setLoading(false), 4000);
     return () => clearTimeout(timer);
   }, []);
 
   useEffect(() => {
     startLocationTracking();
     return () => {
-      if (watchId.current !== null) {
-        Geolocation.clearWatch(watchId.current);
-      }
+      if (watchId.current !== null) Geolocation.clearWatch(watchId.current);
     };
   }, []);
 
-
   const getRoute = async (origin, destination) => {
+    if (!origin || !destination) return;
+
     try {
-      const response = await fetch("https://api.openrouteservice.org/v2/directions/driving-car/geojson",
-        {
-          method: "POST",
-          headers: {
-            Authorization: ORS_API_KEY,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            coordinates: [
-              [origin.longitude, origin.latitude],
-              [destination.longitude, destination.latitude],
-            ],
-          }),
-        }
-      );
+      const response = await fetch("https://api.openrouteservice.org/v2/directions/driving-car/geojson", {
+        method: "POST",
+        headers: {
+          Authorization: ORS_API_KEY,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          coordinates: [
+            [origin.longitude, origin.latitude],
+            [destination.longitude, destination.latitude],
+          ],
+        }),
+      });
+
       const data = await response.json();
       const coords = data?.features?.[0]?.geometry?.coordinates?.map(([lng, lat]) => ({
         latitude: lat,
         longitude: lng,
       }));
+
       if (!coords?.length) return;
       setRouteCoordinates(coords);
     } catch (error) {
@@ -79,53 +73,53 @@ const App = () => {
       }
 
       if (Platform.OS === "android") {
-        const granted = await PermissionsAndroid.request(
-          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
-        );
+        const granted = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION);
+
         if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
           console.log("Location permission denied");
           return;
         }
+
         await promptForEnableLocationIfNeeded({
           interval: 10000,
           fastInterval: 5000,
         });
       }
+
       watchId.current = Geolocation.watchPosition(
         position => {
           const coords = {
             latitude: position.coords.latitude,
             longitude: position.coords.longitude,
           };
-          // Prefer device heading
+
+          let newHeading = headingRef.current;
+
           if (position.coords.heading !== null && position.coords.heading !== undefined && position.coords.heading >= 0) {
-            setHeading(position.coords.heading);
-          }
-          // Fallback to bearing calculation
-          else if (previousLocation.current) {
-            const distance = Math.abs(coords.latitude - previousLocation.current.latitude) +
-              Math.abs(coords.longitude - previousLocation.current.longitude);
-            // Ignore GPS jitter
+            newHeading = position.coords.heading;
+          } else if (previousLocation.current) {
+            const distance = Math.abs(coords.latitude - previousLocation.current.latitude) + Math.abs(coords.longitude - previousLocation.current.longitude);
+
             if (distance > 0.00005) {
               const bearing = getBearing(previousLocation.current.latitude, previousLocation.current.longitude, coords.latitude, coords.longitude);
-              setHeading(prev => smoothHeading(prev, bearing));
+              newHeading = smoothHeading(headingRef.current, bearing);
             }
           }
+          headingRef.current = newHeading;
           previousLocation.current = coords;
           setCurrentLocation(coords);
-          if (coords?.latitude && coords?.longitude) {
-            mapRef.current?.animateToRegion(
-              {
-                latitude: coords?.latitude,
-                longitude: coords?.longitude,
-                latitudeDelta: 0.003,
-                longitudeDelta: 0.003,
-              },
-              1000
-            );
-          }
+          mapRef.current?.animateCamera(
+            {
+              center: coords,
+              heading: newHeading,
+              pitch: 0,
+              zoom: 18,
+            },
+            { duration: 1000 }
+          );
+
           const now = Date.now();
-          if (lastRouteUpdate.current === 0 || now - lastRouteUpdate.current > 10000) {
+          if (destination && (lastRouteUpdate.current === 0 || now - lastRouteUpdate.current > 10000)) {
             lastRouteUpdate.current = now;
             getRoute(coords, destination);
           }
@@ -150,9 +144,8 @@ const App = () => {
   const handleMapPress = e => {
     const newDestination = e.nativeEvent.coordinate;
     setDestination(newDestination);
-    if (currentLocation) {
-      getRoute(currentLocation, newDestination);
-    }
+
+    if (currentLocation) getRoute(currentLocation, newDestination);
   };
 
   const smoothHeading = (current, next) => {
@@ -164,80 +157,27 @@ const App = () => {
     const dLon = ((endLng - startLng) * Math.PI) / 180;
     const lat1 = (startLat * Math.PI) / 180;
     const lat2 = (endLat * Math.PI) / 180;
+
     const y = Math.sin(dLon) * Math.cos(lat2);
-    const x =
-      Math.cos(lat1) * Math.sin(lat2) -
-      Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon);
+    const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon);
+
     let brng = (Math.atan2(y, x) * 180) / Math.PI;
     brng = (brng + 360) % 360;
+
     return brng;
   };
 
-  //-------------------------- map style ---------------------->>
   const grayMapStyle = [
-    {
-      featureType: "poi",
-      stylers: [{ visibility: "off" }],
-    },
-    {
-      featureType: "transit",
-      stylers: [{ visibility: "off" }],
-    },
-
-    // Land
-    {
-      featureType: "landscape",
-      elementType: "geometry",
-      stylers: [{ color: "#eeeeee" }],
-    },
-
-    // Buildings
-    {
-      featureType: "administrative.land_parcel",
-      elementType: "geometry",
-      stylers: [{ color: "#d6d6d6" }],
-    },
-
-    // Local streets
-    {
-      featureType: "road.local",
-      elementType: "geometry",
-      stylers: [{ color: "#ffffff" }],
-    },
-
-    // Main roads
-    {
-      featureType: "road.arterial",
-      elementType: "geometry",
-      stylers: [{ color: "#f8f8f8" }],
-    },
-
-    // Highways
-    {
-      featureType: "road.highway",
-      elementType: "geometry",
-      stylers: [{ color: "#e8e8e8" }],
-    },
-
-    // Water
-    {
-      featureType: "water",
-      elementType: "geometry",
-      stylers: [{ color: "#cfcfcf" }],
-    },
-
-    // Keep street names visible
-    {
-      featureType: "road",
-      elementType: "labels.text.fill",
-      stylers: [{ color: "#666666" }],
-    },
-
-    {
-      featureType: "road",
-      elementType: "labels.text.stroke",
-      stylers: [{ color: "#ffffff" }],
-    },
+    { featureType: "poi", stylers: [{ visibility: "off" }] },
+    { featureType: "transit", stylers: [{ visibility: "off" }] },
+    { featureType: "landscape", elementType: "geometry", stylers: [{ color: "#eeeeee" }] },
+    { featureType: "administrative.land_parcel", elementType: "geometry", stylers: [{ color: "#d6d6d6" }] },
+    { featureType: "road.local", elementType: "geometry", stylers: [{ color: "#ffffff" }] },
+    { featureType: "road.arterial", elementType: "geometry", stylers: [{ color: "#f8f8f8" }] },
+    { featureType: "road.highway", elementType: "geometry", stylers: [{ color: "#e8e8e8" }] },
+    { featureType: "water", elementType: "geometry", stylers: [{ color: "#cfcfcf" }] },
+    { featureType: "road", elementType: "labels.text.fill", stylers: [{ color: "#666666" }] },
+    { featureType: "road", elementType: "labels.text.stroke", stylers: [{ color: "#ffffff" }] },
   ];
 
   const searchPlaces = async text => {
@@ -249,12 +189,7 @@ const App = () => {
     }
 
     try {
-      const response = await fetch(
-        `https://photon.komoot.io/api/?q=${encodeURIComponent(
-          text
-        )}&limit=5`
-      );
-
+      const response = await fetch(`https://photon.komoot.io/api/?q=${encodeURIComponent(text)}&limit=5`);
       const data = await response.json();
 
       setPlaces(data.features || []);
@@ -263,72 +198,41 @@ const App = () => {
     }
   };
 
-
   const centerOnCurrentLocation = () => {
     if (!currentLocation || !mapRef.current) return;
-
-    zoomDelta.current = Math.max(
-      zoomDelta.current / 2,
-      0.001
-    );
-
-    mapRef.current.animateToRegion(
+    zoomLevel.current = Math.min(zoomLevel.current + 1, 20);
+    mapRef.current.animateCamera(
       {
-        latitude: currentLocation.latitude,
-        longitude: currentLocation.longitude,
-        latitudeDelta: zoomDelta.current,
-        longitudeDelta: zoomDelta.current,
+        center: {
+          latitude: currentLocation.latitude,
+          longitude: currentLocation.longitude,
+        },
+        heading: headingRef.current,
+        pitch: 0,
+        zoom: zoomLevel.current,
       },
-      500
+      { duration: 700 }
     );
   };
 
   return (
     <>
-      <StatusBar
-        translucent
-        backgroundColor="transparent"
-        barStyle="dark-content"
-      />
+      <StatusBar translucent backgroundColor="transparent" barStyle="dark-content" />
       <View style={{ flex: 1 }}>
-        {
-          loading &&
+        {loading && (
           <View style={styles.loader}>
-            <ActivityIndicator size={"large"} color={"#ffe100"} />
+            <ActivityIndicator size="large" color="#ffe100" />
           </View>
-        }
-        <View
-          style={{
-            position: "absolute",
-            top: 50,
-            left: 10,
-            right: 10,
-            zIndex: 99,
-          }}
-        >
-          <TextInput
-            placeholder="Search your destination"
-            value={searchText}
-            onChangeText={searchPlaces}
-            style={{
-              height: 50,
-              backgroundColor: "#fff",
-              borderRadius: 12,
-              paddingHorizontal: 15,
-              color: "#000",
-            }}
-            placeholderTextColor={"#505050"}
-          />
+        )}
+
+        <View style={styles.searchBox}>
+          <TextInput placeholder="Search your destination" value={searchText} onChangeText={searchPlaces} style={styles.input} placeholderTextColor="#505050" />
+
           <FlatList
             keyboardShouldPersistTaps="handled"
             data={places}
-            keyExtractor={item => item.properties.osm_id?.toString()}
-            style={{
-              backgroundColor: "#fff",
-              marginTop: 5,
-              borderRadius: 12,
-              maxHeight: 250,
-            }}
+            keyExtractor={(item, index) => item.properties.osm_id?.toString() || index.toString()}
+            style={styles.placesList}
             renderItem={({ item }) => (
               <TouchableOpacity
                 onPress={() => {
@@ -336,10 +240,12 @@ const App = () => {
                     latitude: item.geometry.coordinates[1],
                     longitude: item.geometry.coordinates[0],
                   };
+
                   setDestination(newDestination);
                   getRoute(currentLocation, newDestination);
                   setSearchText(item.properties.name || item.properties.city || "");
                   setPlaces([]);
+
                   mapRef.current?.animateToRegion(
                     {
                       ...newDestination,
@@ -348,30 +254,19 @@ const App = () => {
                     },
                     1000
                   );
+
                   Keyboard.dismiss();
                 }}
-                style={{
-                  padding: 15,
-                  borderBottomWidth: 0.5,
-                  borderBottomColor: "#ddd",
-                }}
+                style={styles.placeItem}
               >
-                <Text style={{ color: "#000" }}>
-                  {item.properties.name}
-                </Text>
-
-                <Text style={{ color: "#777", fontSize: 12 }}>
-                  {item.properties.city ||
-                    item.properties.state ||
-                    item.properties.country}
-                </Text>
+                <Text style={{ color: "#000" }}>{item.properties.name}</Text>
+                <Text style={{ color: "#777", fontSize: 12 }}>{item.properties.city || item.properties.state || item.properties.country}</Text>
               </TouchableOpacity>
             )}
           />
         </View>
 
-        {
-          currentLocation?.latitude && currentLocation?.longitude &&
+        {currentLocation?.latitude && currentLocation?.longitude && (
           <MapView
             ref={mapRef}
             style={{ flex: 1 }}
@@ -384,81 +279,20 @@ const App = () => {
               longitudeDelta: 0.05,
             }}
           >
-            <Marker
-              coordinate={currentLocation}
-              flat={true}
-              rotation={heading}
-              image={require("./src/images/bikerS.png")}
-              anchor={{ x: 0.5, y: 0.5 }}
-              style={{
-                width: 40,
-                height: 40
-              }}
-            />
-            {
-              destination &&
-              <Marker
-                pinColor="#ff0000"
-                coordinate={destination}
-                title="Destination"
-              />
-            }
+            <Marker coordinate={currentLocation} flat={true} rotation={0} image={require("./src/images/bikerS.png")} anchor={{ x: 0.5, y: 0.5 }} />
 
-            {routeCoordinates.length > 0 && destination && (
-              <Polyline
-                coordinates={routeCoordinates}
-                strokeWidth={5}
-                strokeColor="#282200"
-              />
-            )}
+            {destination && <Marker pinColor="#ff0000" coordinate={destination} title="Destination" />}
+
+            {routeCoordinates.length > 0 && destination && <Polyline coordinates={routeCoordinates} strokeWidth={5} strokeColor="#282200" />}
           </MapView>
-        }
-        <TouchableOpacity
-          onPress={centerOnCurrentLocation}
-          style={{
-            position: "absolute",
-            zIndex: 999,
-            bottom: 30,
-            right: 20,
-            backgroundColor: "#007AFF",
-            paddingHorizontal: 20,
-            paddingVertical: 12,
-            borderRadius: 30,
-            // elevation: 5,
-          }}
-        >
-          <Text
-            style={{
-              color: "#fff",
-              fontWeight: "600",
-            }}
-          >
-            Zoom
-          </Text>
+        )}
+
+        <TouchableOpacity onPress={centerOnCurrentLocation} style={[styles.button, styles.zoomButton]}>
+          <Text style={styles.buttonText}>Zoom</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity
-          onPress={startLocationTracking}
-          style={{
-            position: "absolute",
-            zIndex: 999,
-            bottom: 30,
-            alignSelf: 'center',
-            backgroundColor: "#007AFF",
-            paddingHorizontal: 20,
-            paddingVertical: 12,
-            borderRadius: 30,
-            // elevation: 5,
-          }}
-        >
-          <Text
-            style={{
-              color: "#fff",
-              fontWeight: "600",
-            }}
-          >
-            My Location
-          </Text>
+        <TouchableOpacity onPress={startLocationTracking} style={[styles.button, styles.locationButton]}>
+          <Text style={styles.buttonText}>My Location</Text>
         </TouchableOpacity>
       </View>
     </>
@@ -467,15 +301,58 @@ const App = () => {
 
 export default App;
 
-
 const styles = StyleSheet.create({
   loader: {
     height: "100%",
     width: "100%",
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#000',
-    position: 'absolute',
-    zIndex: 9999999999
-  }
-})
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#000",
+    position: "absolute",
+    zIndex: 9999999999,
+  },
+  searchBox: {
+    position: "absolute",
+    top: 50,
+    left: 10,
+    right: 10,
+    zIndex: 99,
+  },
+  input: {
+    height: 50,
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    paddingHorizontal: 15,
+    color: "#000",
+  },
+  placesList: {
+    backgroundColor: "#fff",
+    marginTop: 5,
+    borderRadius: 12,
+    maxHeight: 250,
+  },
+  placeItem: {
+    padding: 15,
+    borderBottomWidth: 0.5,
+    borderBottomColor: "#ddd",
+  },
+  button: {
+    position: "absolute",
+    zIndex: 999,
+    bottom: 30,
+    backgroundColor: "#007AFF",
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 30,
+  },
+  zoomButton: {
+    right: 20,
+  },
+  locationButton: {
+    alignSelf: "center",
+  },
+  buttonText: {
+    color: "#fff",
+    fontWeight: "600",
+  },
+});
